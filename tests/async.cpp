@@ -46,6 +46,7 @@ void test_task_basics() {
     std::cout << "  ok  task_basics\n";
 }
 
+#if NSIG_HAS_EXCEPTIONS
 nsig::task<int> boom() {
     throw std::runtime_error("nope");
     co_return 1;
@@ -57,6 +58,7 @@ void test_task_exception() {
     check(static_cast<bool>(err), "exception propagated to the callback");
     std::cout << "  ok  task_exception\n";
 }
+#endif
 
 void test_co_await_changed() {
     nsig::signal<int> count{0};
@@ -171,6 +173,7 @@ void test_resource_discards_stale_results() {
     std::cout << "  ok  resource_discards_stale_results\n";
 }
 
+#if NSIG_HAS_EXCEPTIONS
 void test_resource_error() {
     nsig::signal<int> id{1};
     auto fetch = [](int) -> nsig::task<int> {
@@ -182,18 +185,23 @@ void test_resource_error() {
     check(!r.loading(), "loading cleared on failure");
     std::cout << "  ok  resource_error\n";
 }
+#endif
 
 }  // namespace
 
 int main() {
     test_task_basics();
+#if NSIG_HAS_EXCEPTIONS
     test_task_exception();
+#endif
     test_co_await_changed();
     test_co_await_until();
     test_until_already_true();
     test_resource();
     test_resource_discards_stale_results();
+#if NSIG_HAS_EXCEPTIONS
     test_resource_error();
+#endif
     std::cout << "\n" << (checks - failures) << "/" << checks << " checks passed\n";
     return failures == 0 ? 0 : 1;
 }
