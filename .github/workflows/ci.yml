@@ -1,0 +1,95 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: ${{ matrix.compiler }} ${{ matrix.mode }}
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - compiler: clang++-18
+            std: c++2b
+            mode: release
+          - compiler: g++-13
+            std: c++23
+            mode: release
+          - compiler: g++-13
+            std: c++23
+            mode: sanitizers
+          - compiler: clang++-18
+            std: c++2b
+            mode: freestanding
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang-18 g++-13 ninja-build valgrind
+
+      - name: Configure
+        run: |
+          FLAGS="-std=${{ matrix.std }}"
+          if [ "${{ matrix.mode }}" = "sanitizers" ]; then
+            FLAGS="$FLAGS -fsanitize=address,undefined -fno-omit-frame-pointer"
+          fi
+          if [ "${{ matrix.mode }}" = "freestanding" ]; then
+            # What an ESP-IDF build looks like: no exceptions, no RTTI,
+            # one global runtime instead of thread-local.
+            FLAGS="$FLAGS -fno-exceptions -fno-rtti -Os -DNSIG_THREAD_LOCAL="
+          fi
+          cmake -S . -B build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_CXX_COMPILER=${{ matrix.compiler }} \
+            -DCMAKE_CXX_FLAGS="$FLAGS"
+
+      - name: Build
+        run: cmake --build build
+
+      - name: Test
+        run: ctest --test-dir build --output-on-failure
+
+      - name: Valgrind
+        if: matrix.mode == 'release' && matrix.compiler == 'g++-13'
+        run: |
+          valgrind --error-exitcode=9 --leak-check=full ./build/nsig_conformance
+          valgrind --error-exitcode=9 --leak-check=full ./build/nsig_adapt
+
+  module:
+    name: import nsig
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - run: sudo apt-get update && sudo apt-get install -y clang-18 ninja-build
+      - name: Build the C++20 module
+        run: |
+          cmake -S . -B build-mod -G Ninja \
+            -DCMAKE_CXX_COMPILER=clang++-18 \
+            -DCMAKE_CXX_FLAGS="-std=c++2b" \
+            -DNSIG_BUILD_MODULE=ON -DNSIG_BUILD_TESTS=OFF -DNSIG_BUILD_BENCH=OFF
+          cmake --build build-mod
+          ./build-mod/nsig_module_demo
+
+  amalgamation:
+    name: single header is current
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - run: sudo apt-get update && sudo apt-get install -y clang-18
+      - name: Regenerate and diff
+        run: |
+          python3 tools/amalgamate.py
+          git diff --exit-code single_include/nsig.hpp
+      - name: Compile against the single header
+        run: |
+          clang++-18 -std=c++2b -O1 -Wall -Wextra -Wpedantic \
+            -Isingle_include tests/single_header.cpp -o /tmp/sh
+          /tmp/sh
